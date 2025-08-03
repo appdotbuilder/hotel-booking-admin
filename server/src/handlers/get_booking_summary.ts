@@ -1,40 +1,75 @@
 
+import { db } from '../db';
+import { customersTable, hotelsTable } from '../db/schema';
+import { eq } from 'drizzle-orm';
 import { type CreateBookingInput, type BookingSummary } from '../schema';
 
 export async function getBookingSummary(input: CreateBookingInput): Promise<BookingSummary> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is calculating booking summary before final confirmation.
-    // Should fetch customer and hotel data, calculate nights, prices, and return summary.
+  try {
+    // Fetch customer data
+    const customerResults = await db.select()
+      .from(customersTable)
+      .where(eq(customersTable.id, input.customer_id))
+      .execute();
+
+    if (customerResults.length === 0) {
+      throw new Error(`Customer with ID ${input.customer_id} not found`);
+    }
+
+    // Fetch hotel data
+    const hotelResults = await db.select()
+      .from(hotelsTable)
+      .where(eq(hotelsTable.id, input.hotel_id))
+      .execute();
+
+    if (hotelResults.length === 0) {
+      throw new Error(`Hotel with ID ${input.hotel_id} not found`);
+    }
+
+    const customer = customerResults[0];
+    const hotelData = hotelResults[0];
+
+    // Calculate nights between check-in and check-out dates
     const checkIn = new Date(input.check_in_date);
     const checkOut = new Date(input.check_out_date);
     const nights = Math.ceil((checkOut.getTime() - checkIn.getTime()) / (1000 * 60 * 60 * 24));
-    
-    return Promise.resolve({
-        customer: {
-            id: 0,
-            name: 'Sample Customer',
-            address: 'Sample Address',
-            phone: '+966500000000',
-            email: 'customer@example.com',
-            created_at: new Date()
-        },
-        hotel: {
-            id: 0,
-            name: 'Sample Hotel',
-            location: 'Riyadh',
-            room_type: 'double',
-            meal_package: 'fullboard',
-            base_price: 200,
-            markup_percentage: 20,
-            created_at: new Date()
-        },
-        check_in_date: checkIn,
-        check_out_date: checkOut,
-        room_count: input.room_count,
-        nights: nights,
-        base_price_per_night: 200,
-        selling_price_per_night: 240,
-        total_base_cost: 200 * nights * input.room_count,
-        total_selling_price: 240 * nights * input.room_count
-    } as BookingSummary);
+
+    if (nights <= 0) {
+      throw new Error('Check-out date must be after check-in date');
+    }
+
+    // Convert numeric fields from database
+    const basePricePerNight = parseFloat(hotelData.base_price);
+    const markupPercentage = parseFloat(hotelData.markup_percentage);
+
+    // Calculate selling price with markup
+    const sellingPricePerNight = basePricePerNight * (1 + markupPercentage / 100);
+
+    // Calculate total costs
+    const totalBaseCost = basePricePerNight * nights * input.room_count;
+    const totalSellingPrice = sellingPricePerNight * nights * input.room_count;
+
+    // Build hotel object with converted numeric fields
+    const hotel = {
+      ...hotelData,
+      base_price: basePricePerNight,
+      markup_percentage: markupPercentage
+    };
+
+    return {
+      customer,
+      hotel,
+      check_in_date: checkIn,
+      check_out_date: checkOut,
+      room_count: input.room_count,
+      nights,
+      base_price_per_night: basePricePerNight,
+      selling_price_per_night: sellingPricePerNight,
+      total_base_cost: totalBaseCost,
+      total_selling_price: totalSellingPrice
+    };
+  } catch (error) {
+    console.error('Get booking summary failed:', error);
+    throw error;
+  }
 }

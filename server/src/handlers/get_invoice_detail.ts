@@ -1,42 +1,66 @@
 
+import { db } from '../db';
+import { bookingsTable, customersTable, hotelsTable, paymentsTable } from '../db/schema';
 import { type InvoiceDetail } from '../schema';
+import { eq } from 'drizzle-orm';
 
 export async function getInvoiceDetail(invoiceNumber: string): Promise<InvoiceDetail | null> {
-    // This is a placeholder declaration! Real code should be implemented here.
-    // The goal of this handler is fetching invoice details including booking, customer, hotel, and payments.
-    // Should calculate total paid amount and outstanding balance.
-    return Promise.resolve({
-        booking: {
-            id: 0,
-            customer_id: 1,
-            hotel_id: 1,
-            check_in_date: new Date(),
-            check_out_date: new Date(),
-            room_count: 1,
-            total_price: 1000,
-            invoice_number: invoiceNumber,
-            created_at: new Date()
-        },
-        customer: {
-            id: 1,
-            name: 'Sample Customer',
-            address: 'Sample Address',
-            phone: '+966500000000',
-            email: 'customer@example.com',
-            created_at: new Date()
-        },
-        hotel: {
-            id: 1,
-            name: 'Sample Hotel',
-            location: 'Riyadh',
-            room_type: 'double',
-            meal_package: 'fullboard',
-            base_price: 200,
-            markup_percentage: 20,
-            created_at: new Date()
-        },
-        payments: [],
-        total_paid: 0,
-        outstanding_balance: 1000
-    } as InvoiceDetail);
+  try {
+    // Get booking with customer and hotel data using joins
+    const bookingResult = await db.select()
+      .from(bookingsTable)
+      .innerJoin(customersTable, eq(bookingsTable.customer_id, customersTable.id))
+      .innerJoin(hotelsTable, eq(bookingsTable.hotel_id, hotelsTable.id))
+      .where(eq(bookingsTable.invoice_number, invoiceNumber))
+      .execute();
+
+    if (bookingResult.length === 0) {
+      return null;
+    }
+
+    const result = bookingResult[0];
+
+    // Get all payments for this booking
+    const paymentsResult = await db.select()
+      .from(paymentsTable)
+      .where(eq(paymentsTable.booking_id, result.bookings.id))
+      .execute();
+
+    // Convert numeric fields and prepare data
+    const booking = {
+      ...result.bookings,
+      total_price: parseFloat(result.bookings.total_price)
+    };
+
+    const customer = result.customers;
+
+    const hotel = {
+      ...result.hotels,
+      base_price: parseFloat(result.hotels.base_price),
+      markup_percentage: parseFloat(result.hotels.markup_percentage)
+    };
+
+    const payments = paymentsResult.map(payment => ({
+      ...payment,
+      amount: parseFloat(payment.amount)
+    }));
+
+    // Calculate total paid amount
+    const total_paid = payments.reduce((sum, payment) => sum + payment.amount, 0);
+
+    // Calculate outstanding balance
+    const outstanding_balance = booking.total_price - total_paid;
+
+    return {
+      booking,
+      customer,
+      hotel,
+      payments,
+      total_paid,
+      outstanding_balance
+    };
+  } catch (error) {
+    console.error('Get invoice detail failed:', error);
+    throw error;
+  }
 }
